@@ -7,7 +7,7 @@ public class PlayerMovement : MonoBehaviour
 {
     [Header("Movement Variables")]
     // Movespeed is mainly used to cap the movement if it exceeds too much (under normal conditions).
-    [SerializeField] private float cappedSpeed;
+    [SerializeField] private float moveSpeed;
     [SerializeField] private float walkSpeed;
     [SerializeField] private float sprintSpeed;
     // Prevents slipperiness.
@@ -41,6 +41,7 @@ public class PlayerMovement : MonoBehaviour
     [Header("Slope Handling")]
     [SerializeField] private float maxSlopeAngle;
     [SerializeField] private RaycastHit slopeHit;
+    private bool exitingSlope;
 
     [Header("Raycasting")]
     [SerializeField] private float rayLength;
@@ -112,6 +113,7 @@ public class PlayerMovement : MonoBehaviour
     private void FixedUpdate()
     {
         MovePlayer();
+        Debug.Log(moveSpeed);
     }
 
     private void PlayerInput()
@@ -144,19 +146,19 @@ public class PlayerMovement : MonoBehaviour
         if (Input.GetKey(crouchKey))
         {
             movementState = MovementState.crouching;
-            cappedSpeed = crouchSpeed;
+            moveSpeed = crouchSpeed;
         }
         // If you're sprinting...
-        if (grounded && Input.GetKey(sprintKey))
+        else if (grounded && Input.GetKey(sprintKey))
         {
             movementState = MovementState.sprinting;
-            cappedSpeed = sprintSpeed;
+            moveSpeed = sprintSpeed;
         }
         // If you're walking...
         else if (grounded)
         {
             movementState = MovementState.walking;
-            cappedSpeed = walkSpeed;
+            moveSpeed = walkSpeed;
         }
         // If you're airborne...
         else
@@ -170,34 +172,61 @@ public class PlayerMovement : MonoBehaviour
         // Calculates movement direction.
         moveDirection = orientation.forward * verticalInput + orientation.right * horizontalInput;
 
-        // Adds a force to the Rigidbody. If your grounded, your speed isn't affected by airMultiplier.
-        if (grounded)
+        if (OnSlope() && !exitingSlope)
         {
-            rb.AddForce(moveDirection.normalized * cappedSpeed * 10f, ForceMode.Force);
+            rb.AddForce(GetSlopeMoveDirection() * moveSpeed * 20f, ForceMode.Force);
+
+            if (rb.velocity.y > 0)
+            {
+                rb.AddForce(Vector3.down * 80f, ForceMode.Force);
+            }
+        }
+        // Adds a force to the Rigidbody. If your grounded, your speed isn't affected by airMultiplier.
+        else if (grounded)
+        {
+            rb.AddForce(moveDirection.normalized * moveSpeed * 10f, ForceMode.Force);
         }
         else if (!grounded)
         {
-            rb.AddForce(moveDirection.normalized * cappedSpeed * 10f * airMultiplier, ForceMode.Force);
+            rb.AddForce(moveDirection.normalized * moveSpeed * 10f * airMultiplier, ForceMode.Force);
         }
+
+        // While on slope, gravity is turned off.
+        rb.useGravity = !OnSlope();
     }
 
     private void SpeedControl()
     {
-        Vector3 flatVelocity = new Vector3(rb.velocity.x, 0f, rb.velocity.z);
-
-        // Limit the velocity if needed. Basically, if you go faster than your movement speed...
-        if (flatVelocity.magnitude > cappedSpeed)
+        // Limits speed on a slope.
+        if (OnSlope() && !exitingSlope)
         {
-            // You will calculate what your maximum velocity WOULD be...
-            Vector3 limitedVelocity = flatVelocity.normalized * cappedSpeed;
-
-            // and then apply it.
-            rb.velocity = new Vector3(limitedVelocity.x, rb.velocity.y, limitedVelocity.z);
+            if(rb.velocity.magnitude > moveSpeed)
+            {
+                rb.velocity = rb.velocity.normalized * moveSpeed;
+            }
         }
+        // Limits speed on ground or in the air.
+        else
+        {
+            Vector3 flatVelocity = new Vector3(rb.velocity.x, 0f, rb.velocity.z);
+
+            // Limit the velocity if needed. Basically, if you go faster than your movement speed...
+            if (flatVelocity.magnitude > moveSpeed)
+            {
+                // You will calculate what your maximum velocity WOULD be...
+                Vector3 limitedVelocity = flatVelocity.normalized * moveSpeed;
+
+                // and then apply it.
+                rb.velocity = new Vector3(limitedVelocity.x, rb.velocity.y, limitedVelocity.z);
+            }
+        }
+        
     }
 
     private void Jump()
     {
+        exitingSlope = true;
+        
         // Reset y velocity.
         rb.velocity = new Vector3(rb.velocity.x, 0f, rb.velocity.z);
         // Adds force. Uses ForceMode.Impusle because the force is only applied once.
@@ -207,5 +236,26 @@ public class PlayerMovement : MonoBehaviour
     private void ResetJump()
     {
         canJump = true;
+
+        exitingSlope = false;
+    }
+
+    private bool OnSlope()
+    {
+        Vector3 slopeRayOrigin = new Vector3(transform.position.x, transform.position.y - (playerHeight * transform.localScale.y), transform.position.z);
+        Ray slopeR = new Ray(slopeRayOrigin, Vector3.down);
+
+        if (Physics.Raycast(slopeR, out slopeHit, rayLength))
+        {
+            float angle = Vector3.Angle(Vector3.up, slopeHit.normal);
+            return angle < maxSlopeAngle && angle != 0;
+        }
+
+        return false;
+    }
+
+    private Vector3 GetSlopeMoveDirection()
+    {
+        return Vector3.ProjectOnPlane(moveDirection, slopeHit.normal).normalized;
     }
 }
